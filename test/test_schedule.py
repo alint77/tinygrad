@@ -2502,8 +2502,8 @@ class TestUOpBecome(unittest.TestCase):
     check_schedule(add, 1)
     # NOTE: realized base is always a flat buffer
     assert UPat(Ops.BUFFER).match(add.lazydata.base, {})
-    # the Tensor UOp can optionally stack movement ops on top of BUFFER, in this case to preserve the (4, 4) shape of the tensor
-    assert UPat(Ops.RESHAPE, src=(UPat(Ops.BUFFER),)).match(add.lazydata, {})
+    # the Tensor UOp can optionally stack a VIEW on top of the BUFFER, in this case to preserve the (4, 4) shape of the tensor
+    assert UPat(Ops.VIEW, src=(UPat(Ops.BUFFER),)).match(add.lazydata, {})
     self.assertEqual(add.lazydata.size, 16)
     self.assertEqual(add.lazydata.shape, (4, 4))
 
@@ -2540,7 +2540,7 @@ class TestUOpBecome(unittest.TestCase):
     b = a*1
     assert UPat(Ops.MUL).match(b.lazydata, {}) # before scheduling it's a mul
     check_schedule(b, 0)
-    assert UPat(Ops.RESHAPE, src=(UPat(Ops.BUFFER))).match(b.lazydata, {}) # scheduling backtracks to the movement op if the realized tensor becomes a view
+    assert UPat(Ops.VIEW, src=(UPat(Ops.BUFFER))).match(b.lazydata, {}) # scheduling merges all MovementOps into a single VIEW
     self.assertIs(a.lazydata.base.buffer, b.lazydata.base.buffer)
 
   def test_become_buf_with_mops(self):
@@ -2591,20 +2591,20 @@ class TestUOpBecome(unittest.TestCase):
     a = Tensor.empty(4, 4)
     b = a.permute((1, 0))+0
     check_schedule(b, 0)
-    self.assertIs(b.lazydata, a.lazydata.permute((1, 0)))
+    self.assertEqual(b.lazydata.st, a.lazydata.permute((1, 0)).st)
 
   def test_become_existing_buf_view_alt(self):
     a = Tensor.empty(4, 4)
     b = a.permute((1, 0)).reshape((8, 2))+0
     check_schedule(b, 0)
-    self.assertIs(b.lazydata, a.lazydata.permute((1, 0)).reshape((8, 2)))
+    self.assertEqual(b.lazydata.st, a.lazydata.permute((1, 0)).reshape((8, 2)).st)
 
   # they can also have other base parents that simplified, in that case we just backtrack to the chained mops
   def test_become_existing_buf_complex(self):
     a = Tensor.empty(4, 4)
     b = (a.permute((1, 0))+0).reshape((8, 2))+0
     check_schedule(b, 0)
-    self.assertIs(b.lazydata, a.lazydata.permute((1, 0)).reshape((8, 2)))
+    self.assertEqual(b.lazydata.st, a.lazydata.permute((1, 0)).reshape((8, 2)).st)
     assert b.lazydata.is_realized
 
   def test_become_multiple_choices(self):
@@ -2615,9 +2615,8 @@ class TestUOpBecome(unittest.TestCase):
     assert all_same([x.lazydata.base.realized for x in [a,b,c]])
     # these movement ops result in the same ShapeTracker
     assert b.lazydata.st == c.lazydata.st
-    # the decision for which movement op to pick is local, we could also make this always pick the simplest one
-    assert UPat(Ops.SHRINK, src=(UPat(Ops.RESHAPE, src=(UPat(Ops.RESHAPE, src=(UPat(Ops.BUFFER),)),)),)).match(b.lazydata, {})
-    assert UPat(Ops.SHRINK, src=(UPat(Ops.RESHAPE, src=(UPat(Ops.BUFFER),)),)).match(c.lazydata, {})
+    assert b.lazydata is c.lazydata
+    assert UPat(Ops.VIEW, src=(UPat(Ops.BUFFER),)).match(c.lazydata, {})
 
 if __name__ == '__main__':
   unittest.main(verbosity=2)
