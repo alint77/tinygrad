@@ -37,6 +37,9 @@ def replace_contiguous(ctx:dict[UOp, UOp], alu:UOp):
     if (replace_src:=ctx.get(s, None)) is not None: new_src[i] = replace_src
   if tuple(new_src) != alu.src: return alu.replace(src=tuple(new_src))
 
+def fix_copy(cp:UOp, device:UOp, view:UOp, x:UOp):
+  return UOp(Ops.COPY, x.dtype, (device, x), cp.arg).view(unwrap(view.st))
+
 sym = symbolic_simple+PatternMatcher([
   # UOp with size 0 is zero
   (UPat(GroupOp.All-{Ops.SINK}, name="root"), lambda root: root.const_like(0) if root.base.st is not None and root.size == 0 \
@@ -53,6 +56,8 @@ sym = symbolic_simple+PatternMatcher([
   # no COPY to same device, except clone (arg is True)
   (UPat(Ops.COPY, src=(UPat(), UPat.var("copyin")), name="copy"),
    lambda copyin,copy: copyin if copyin.device == copy.device and copy.arg is not True else None),
+  # COPY source must be base
+  (UPat(Ops.COPY, name="cp", src=(UPat.var("device"), UPat(Ops.VIEW, name="view", src=(UPat.var("x"),)))), fix_copy),
   # remove cast to image when it's already a contiguous image
   (UPat(Ops.CAST, name="cast", src=(UPat(Ops.VIEW, name="vm", src=(UPat(Ops.CONTIGUOUS, name="base"))),)),
    lambda cast,base,vm: base.view(vm.st) if isinstance(cast.dtype, ImageDType) and isinstance(base.dtype, ImageDType) else None),
@@ -386,7 +391,8 @@ def create_schedule_with_vars(big_sink:UOp) -> tuple[list[ScheduleItem], dict[Va
   # map tensors to buffer/const
   becomes_map: dict[UOp, UOp] = {}
   for k,v in tensor_map.items():
-    if (a:=kernel_map.get(v)) is not None and a.op is Ops.ASSIGN: becomes_map[k] = a.src[0]
+    if (a:=kernel_map.get(v.base)) is not None and a.op is Ops.ASSIGN:
+      becomes_map[k] = a.src[0] if v is v.base else a.src[0].view(unwrap(v.st))
     if v is k: continue
     if v.base.op is Ops.BUFFER: becomes_map[k] = v
     elif v.base.op is Ops.CONST:

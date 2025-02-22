@@ -336,8 +336,7 @@ class UOp(MathTrait, metaclass=UOpMetaClass):
   def __int__(self): return self._eval(dtypes.ints, int)
   def __float__(self): return self._eval(dtypes.floats, float)
   def substitute(self, dvars:dict[UOp, UOp]):
-    with Context(TRACK_MATCH_STATS=0):
-      return graph_rewrite(self, _substitute, dvars, bottom_up=True)
+    return graph_rewrite(self, _substitute, dvars, bottom_up=True)
 
   # *** uop syntactic sugar ***
 
@@ -492,15 +491,7 @@ class UOp(MathTrait, metaclass=UOpMetaClass):
   def copy_to_device(self, device:str|tuple[str, ...], clone:bool=False) -> UOp:
     # if it's a shrink, do the shrink before the copy with CONTIGUOUS
     if prod(self.shape) < prod(self.base.shape): return self.contiguous().copy_to_device(device)
-    # COPY is COPY(DEVICE, copyin.base) -> VIEW(copyin.st)
-    ret = UOp(Ops.COPY, self.base.dtype, (UOp(Ops.DEVICE, arg=device), self.base), clone)
-    op_arg = []
-    mop = self
-    while mop is not self.base:
-      op_arg.append((mop.op, mop.arg))
-      mop = mop.src[0]
-    for op,arg in reversed(op_arg): ret = UOp(op, ret.dtype, (ret,), arg)
-    return ret
+    return UOp(Ops.COPY, self.dtype, (UOp(Ops.DEVICE, arg=device), self), clone)
   def clone(self) -> UOp: return self.copy_to_device(self.device, clone=True)
   @property
   def metadata(self) -> tuple[Metadata, ...]|Metadata|None: return self.arg.metadata if self.op is Ops.KERNEL else all_metadata.get(self, None)
