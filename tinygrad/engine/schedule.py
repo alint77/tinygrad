@@ -72,9 +72,9 @@ sym = symbolic_simple+PatternMatcher([
   # no COPY to same device, except clone (arg is True)
   (UPat(Ops.COPY, src=(UPat(), UPat.var("copyin")), name="copy"),
    lambda copyin,copy: copyin if copyin.device == copy.device and copy.arg is not True else None),
-  # COPY source must be base (NOTE: can do shrink before COPY)
-  (UPat(Ops.COPY, src=(UPat(), UPat(Ops.VIEW, name="copyin")), name="copy"),
-   lambda copyin,copy: copy.replace(src=(copy.src[0], copyin.base)).view(copyin.st)),
+  # COPY source must be base
+  (UPat(Ops.COPY, src=(UPat(), UPat(Ops.VIEW, name="v")), name="copy"),
+   lambda copy,v: v.contiguous().copy_to_device(copy.device) if prod(v.shape)<prod(v.base.shape) else v.base.copy_to_device(copy.device).view(v.st)),
   # remove cast to image when it's already a contiguous image
   (UPat(Ops.CAST, name="cast", src=(UPat(Ops.VIEW, name="vm", src=(UPat(Ops.CONTIGUOUS, name="base"))),)),
    lambda cast,base,vm: base.view(vm.st) if isinstance(cast.dtype, ImageDType) and isinstance(base.dtype, ImageDType) else None),

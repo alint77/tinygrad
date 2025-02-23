@@ -466,10 +466,7 @@ class UOp(MathTrait, metaclass=UOpMetaClass):
     # otherwise it's just a RESHAPE(BUFFER)
     if not isinstance(size:=prod([x.vmax if isinstance(x, UOp) else x for x in shape]), int): raise ValueError(f"size must be int {size}")
     return UOp.new_buffer(device, size, dtype).reshape(shape)
-  def copy_to_device(self, device:str|tuple[str, ...], clone:bool=False) -> UOp:
-    # if it's a shrink, do the shrink before the copy with CONTIGUOUS
-    if prod(self.shape) < prod(self.base.shape): return self.contiguous().copy_to_device(device)
-    return UOp(Ops.COPY, self.dtype, (UOp(Ops.DEVICE, arg=device), self), clone)
+  def copy_to_device(self, device:str|tuple[str, ...], clone:bool=False): return UOp(Ops.COPY, self.dtype, (UOp(Ops.DEVICE, arg=device), self), clone)
   def clone(self) -> UOp: return self.copy_to_device(self.device, clone=True)
   @property
   def metadata(self) -> tuple[Metadata, ...]|Metadata|None: return self.arg.metadata if self.op is Ops.KERNEL else all_metadata.get(self, None)
