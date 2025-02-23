@@ -238,7 +238,7 @@ def append_to_kernel(ctx:KernelContext, x:UOp):
       if (m:=ctx.ops_metadata.get(s)) is not None: new_metadata[m] = None
   return x.replace(src=n, arg=Kernel(x.arg.ast, tuple(new_metadata))) if (n:=tuple(dedup(new_srcs))) != x.src else None
 
-create_kernels = merge_views+PatternMatcher([
+create_kernels = PatternMatcher([
   (UPat(GroupOp.All-{Ops.KERNEL, Ops.BUFFER}, name="x"), create_kernel),
   (UPat(Ops.KERNEL, name="x"), append_to_kernel),
   (UPat(Ops.SINK, name="x"),
