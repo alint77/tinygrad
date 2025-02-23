@@ -405,7 +405,9 @@ def create_schedule_with_vars(big_sink:UOp) -> tuple[list[ScheduleItem], dict[Va
   # map tensors to buffer/const
   becomes_map: dict[UOp, UOp] = {}
   for k,v in tensor_map.items():
-    if (a:=kernel_map.get(v)) is not None and a.op is Ops.ASSIGN: becomes_map[k] = k.src[0] if k.op is Ops.ASSIGN else a.buf_uop.reshape(k.shape)
+    # NOTE: tensors can also map to a VIEW, as long as it's contiguous and we can reshape it it's fine
+    if (a:=kernel_map.get(v.base)) is not None and a.op is Ops.ASSIGN and a.size == k.size and v.st.contiguous:
+      becomes_map[k] = k.src[0] if k.op is Ops.ASSIGN else a.buf_uop.reshape(k.shape)
     if v is k: continue
     if v.base.op is Ops.BUFFER:
       # VIEW isn't a valid tensor uop, we need to backtrack to the movement op that created it
