@@ -336,7 +336,8 @@ class UOp(MathTrait, metaclass=UOpMetaClass):
   def __int__(self): return self._eval(dtypes.ints, int)
   def __float__(self): return self._eval(dtypes.floats, float)
   def substitute(self, dvars:dict[UOp, UOp]):
-    return graph_rewrite(self, _substitute, dvars, bottom_up=True)
+    with Context(TRACK_MATCH_STATS=0):
+      return graph_rewrite(self, _substitute, dvars, bottom_up=True)
 
   # *** uop syntactic sugar ***
 
