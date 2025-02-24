@@ -1,13 +1,18 @@
-from typing import cast
+from typing import cast, Tuple
 import math, struct, sys
 from tinygrad.renderer import Renderer
 from tinygrad.renderer.cstyle import ClangRenderer
 from tinygrad.ops import UOp, PatternMatcher, UPat, Ops, GroupOp
 from tinygrad.dtype import dtypes, DType, PtrDType, truncate
-from tinygrad.helpers import prod, AMX
+from tinygrad.helpers import prod, AMX, getenv
 
-def ldt(dt:DType):
-  if dt.vcount > 1: return f"<{dt.vcount} x {ldt(dt.scalar())}>"
+def ldt(dt: DType) -> str:
+  if dt.vcount > 1:
+    scalar_type = ldt(dt.scalar())
+    if dt.vcount == 4: return f"<{dt.vcount} x {scalar_type}>"
+    elif dt.vcount == 8 and getenv("AVX2", 0): return f"<{dt.vcount} x {scalar_type}>"
+    elif dt.vcount == 16 and getenv("AVX512", 0): return f"<{dt.vcount} x {scalar_type}>"
+    else: return f"<{dt.vcount} x {scalar_type}>"
   if isinstance(dt, PtrDType): return ldt(dt.base) + "*"
   return {dtypes.int8: "i8", dtypes.int16: "i16", dtypes.int32: "i32", dtypes.int64: "i64",
           dtypes.uint8: "i8", dtypes.uint16: "i16", dtypes.uint32: "i32", dtypes.uint64: "i64",
@@ -79,10 +84,9 @@ base_rewrite = PatternMatcher([
   # unary/binary/ternary ops
   (UPat(Ops.BITCAST, name="x"), lambda ctx,x: f"  {ctx[x]} = bitcast {ldt(x.src[0].dtype)} {ctx[x.src[0]]} to {ldt(x.dtype)}"),
   (UPat(Ops.CAST, name="x"), lambda ctx,x: f"  {ctx[x]} = {lcast(x.src[0].dtype, x.dtype)} {ldt(x.src[0].dtype)} {ctx[x.src[0]]} to {ldt(x.dtype)}"),
-  (UPat(GroupOp.Binary, name="x"), lambda ctx,x:
-   f"  {ctx[x]} = {lop[x.src[0].dtype.scalar()][x.op]} {ldt(x.src[0].dtype)} {ctx[x.src[0]]}, {ctx[x.src[1]]}"),
-  (UPat(Ops.WHERE, name="x"), lambda ctx,x:
-   f"  {ctx[x]} = select {ldt(x.src[0].dtype)} {ctx[x.src[0]]}, {ldt(x.src[1].dtype)} {ctx[x.src[1]]}, {ldt(x.src[2].dtype)} {ctx[x.src[2]]}"),
+  (UPat(Ops.MULACC, name="x"), lambda ctx, x: f"  {ctx[x]} = tail call <4 x float> @llvm.fma.v4f32(<4 x float> {ctx[x.src[0]]}, <4 x float> {ctx[x.src[1]]}, <4 x float> {ctx[x.src[2]]})" if x.dtype.count == 4 and x.dtype.scalar() == dtypes.float32 and getenv("AVX2", 0) else None),  # noqa: E501
+  (UPat(GroupOp.Binary, name="x"), lambda ctx,x: f"  {ctx[x]} = {lop[x.src[0].dtype.scalar()][x.op]} {ldt(x.src[0].dtype)} {ctx[x.src[0]]}, {ctx[x.src[1]]}"),
+  (UPat(Ops.WHERE, name="x"), lambda ctx,x: f"  {ctx[x]} = select {ldt(x.src[0].dtype)} {ctx[x.src[0]]}, {ldt(x.src[1].dtype)} {ctx[x.src[1]]}, {ldt(x.src[2].dtype)} {ctx[x.src[2]]}"),
 
   # range
   (UPat(Ops.RANGE, name="x"), lambda ctx,x:
@@ -120,12 +124,15 @@ class LLVMRenderer(Renderer):
     # rewrite RECIP with FDIV
     (UPat(Ops.RECIP, name="x"), lambda x: UOp(Ops.FDIV, x.dtype, (x.const_like(1), x.src[0]))),
     # rewrite cast to bool to CMPNE 0
-    (UPat(Ops.CAST, dtype=dtypes.bool, name="x"), lambda x: x.src[0] != x.src[0].const_like(0)),
+    (UPat(Ops.CAST, dtype=dtypes.bool, name="x"), lambda ctx, x: x.src[0] != x.src[0].const_like(0)),
     # rewrite MAX to CMPLT + WHERE
     (UPat(Ops.MAX, name="m"), lambda m: (m.src[0] < m.src[1]).where(m.src[1], m.src[0])),
     # rewrite bf16 CAST(LOAD) to CAST(BITCAST)
     (UPat(Ops.CAST, name="root", src=(UPat.load(UPat.index(UPat.var("buf"), UPat.var("idx")), dtype=dtypes.bfloat16),)), llvm_bf16_cast),
+    # FMA for scalar float32
+    (UPat(Ops.MULACC, name="x"), lambda ctx, x: f"  {ctx[x]} = tail call float @llvm.fma.f32(float {ctx[x.src[0]]}, float {ctx[x.src[1]]}, float {ctx[x.src[2]]})" if x.dtype.count == 1 and x.dtype.scalar() == dtypes.float32 and getenv('AVX2', 0) else None), # noqa: E501
   ])
+
 
   def render(self, uops: list[UOp]) -> str:
     r: dict[UOp, str] = {}
